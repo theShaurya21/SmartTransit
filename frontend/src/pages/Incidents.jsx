@@ -19,8 +19,6 @@ const emptyForm = {
   category: "Other",
   severity: "Medium",
   description: "",
-  reporter: "Transport Admin",
-  status: "Reported",
 };
 
 function formatIncident(incident) {
@@ -34,7 +32,16 @@ function formatIncident(incident) {
   };
 }
 
+function getCurrentUser() {
+  try {
+    return JSON.parse(localStorage.getItem("user") || "{}");
+  } catch {
+    return {};
+  }
+}
+
 export default function Incidents() {
+  const isAdmin = getCurrentUser().role === "admin";
   const [incidents, setIncidents] = useState([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
@@ -48,12 +55,10 @@ export default function Incidents() {
   const [success, setSuccess] = useState("");
 
   async function loadIncidents() {
-    setLoading(true);
-    setError("");
-
     try {
       const response = await API.get("/incidents");
       setIncidents(response.data.map(formatIncident));
+      setError("");
     } catch (err) {
       setError(
         err.response?.data?.message ||
@@ -65,7 +70,20 @@ export default function Incidents() {
   }
 
   useEffect(() => {
-    loadIncidents();
+    let cancelled = false;
+    API.get("/incidents").then(({ data }) => {
+      if (!cancelled) {
+        setIncidents(data.map(formatIncident));
+        setError("");
+      }
+    }).catch((err) => {
+      if (!cancelled) {
+        setError(err.response?.data?.message || "Unable to load incidents. Check that the backend is running.");
+      }
+    }).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => { cancelled = true; };
   }, []);
 
   const stats = useMemo(
@@ -132,8 +150,6 @@ export default function Incidents() {
       category: incident.category || "Other",
       severity: incident.severity || "Medium",
       description: incident.description || "",
-      reporter: incident.reporter || "Transport Admin",
-      status: incident.status || "Reported",
     });
     setError("");
     setSuccess("");
@@ -284,7 +300,7 @@ export default function Incidents() {
                   <th>Description</th>
                   <th>Reported At</th>
                   <th>Status</th>
-                  <th>Actions</th>
+                  {isAdmin && <th>Actions</th>}
                 </tr>
               </thead>
 
@@ -319,6 +335,7 @@ export default function Incidents() {
                     <td>{incident.time}</td>
 
                     <td>
+                      {isAdmin ? (
                       <select
                         className={`incident-status-select ${incident.status.toLowerCase()}`}
                         value={incident.status}
@@ -331,9 +348,10 @@ export default function Incidents() {
                         <option value="Investigating">Investigating</option>
                         <option value="Resolved">Resolved</option>
                       </select>
+                      ) : incident.status}
                     </td>
 
-                    <td>
+                    {isAdmin && <td>
                       <button
                         className="incident-icon-btn"
                         title="Edit incident"
@@ -342,7 +360,7 @@ export default function Incidents() {
                       >
                         <Pencil size={16} />
                       </button>
-                    </td>
+                    </td>}
                   </tr>
                 ))}
               </tbody>
@@ -455,16 +473,6 @@ export default function Incidents() {
                   placeholder="Describe the incident..."
                   rows={4}
                   required
-                />
-              </label>
-
-              <label>
-                Reporter
-                <input
-                  name="reporter"
-                  value={form.reporter}
-                  onChange={handleChange}
-                  placeholder="Person reporting the incident"
                 />
               </label>
 

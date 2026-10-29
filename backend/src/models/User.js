@@ -29,6 +29,19 @@ const userSchema = new mongoose.Schema(
       default: "student"
     },
 
+    requestedRole: {
+      type: String,
+      enum: ["student", "driver", "admin"],
+      default: null
+    },
+
+    approvalStatus: {
+      type: String,
+      enum: ["Pending", "Approved", "Rejected"],
+      default: "Approved",
+      index: true
+    },
+
     status: {
       type: String,
       enum: ["Active", "Inactive"],

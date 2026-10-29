@@ -13,6 +13,12 @@ const busSchema = new mongoose.Schema(
             required: true,
             trim: true
         },
+        driverId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+            default: null,
+            index: true
+        },
         route: {
             type: String,
             required: true,

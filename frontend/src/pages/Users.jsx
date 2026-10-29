@@ -10,6 +10,8 @@ import {
     ShieldCheck,
     GraduationCap,
     Bus,
+    Check,
+    Ban,
 } from "lucide-react";
 import API from "../services/api";
 
@@ -21,11 +23,23 @@ const emptyForm = {
     status: "Active",
 };
 
+function normalizeUsers(users) {
+    return users.map((user) => ({
+        ...user,
+        id: user._id,
+        role: user.role.toLowerCase(),
+        status: user.status || "Active",
+        requestedRole: user.requestedRole || user.role,
+        approvalStatus: user.approvalStatus || "Approved",
+    }));
+}
+
 function UsersPage() {
     const [users, setUsers] = useState([]);
     const [search, setSearch] = useState("");
     const [roleFilter, setRoleFilter] = useState("All");
     const [statusFilter, setStatusFilter] = useState("All");
+    const [approvalFilter, setApprovalFilter] = useState("All");
     const [modalOpen, setModalOpen] = useState(false);
     const [editingUser, setEditingUser] = useState(null);
     const [formData, setFormData] = useState(emptyForm);
@@ -33,21 +47,13 @@ function UsersPage() {
     const [notice, setNotice] = useState("");
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [processingUserId, setProcessingUserId] = useState("");
 
     const loadUsers = async () => {
-        setLoading(true);
-        setError("");
-
         try {
             const response = await API.get("/users");
-            setUsers(
-                response.data.map((user) => ({
-                    ...user,
-                    id: user._id,
-                    role: user.role.toLowerCase(),
-                    status: user.status || "Active",
-                }))
-            );
+            setUsers(normalizeUsers(response.data));
+            setError("");
         } catch (err) {
             setError(
                 err.response?.data?.message ||
@@ -59,7 +65,20 @@ function UsersPage() {
     };
 
     useEffect(() => {
-        loadUsers();
+        let cancelled = false;
+        API.get("/users").then(({ data }) => {
+            if (!cancelled) {
+                setUsers(normalizeUsers(data));
+                setError("");
+            }
+        }).catch((err) => {
+            if (!cancelled) {
+                setError(err.response?.data?.message || "Could not load users. Please log in as an administrator.");
+            }
+        }).finally(() => {
+            if (!cancelled) setLoading(false);
+        });
+        return () => { cancelled = true; };
     }, []);
 
     const filteredUsers = useMemo(() => {
@@ -70,21 +89,27 @@ function UsersPage() {
 
             const matchesRole =
                 roleFilter === "All" ||
-                user.role === roleFilter.toLowerCase();
+                user.role === roleFilter.toLowerCase() ||
+                user.requestedRole === roleFilter.toLowerCase();
 
             const matchesStatus =
                 statusFilter === "All" ||
                 user.status === statusFilter;
 
-            return matchesSearch && matchesRole && matchesStatus;
+            const matchesApproval =
+                approvalFilter === "All" ||
+                user.approvalStatus === approvalFilter;
+
+            return matchesSearch && matchesRole && matchesStatus && matchesApproval;
         });
-    }, [users, search, roleFilter, statusFilter]);
+    }, [users, search, roleFilter, statusFilter, approvalFilter]);
 
     const counts = useMemo(() => ({
         total: users.length,
         students: users.filter((u) => u.role === "student").length,
         drivers: users.filter((u) => u.role === "driver").length,
         admins: users.filter((u) => u.role === "admin").length,
+        pending: users.filter((u) => u.approvalStatus === "Pending").length,
     }), [users]);
 
     const openAddModal = () => {
@@ -190,6 +215,21 @@ function UsersPage() {
         }
     };
 
+    const handleApproval = async (user, decision) => {
+        setError("");
+        setNotice("");
+        setProcessingUserId(user.id);
+        try {
+            const response = await API.post(`/users/${user.id}/${decision}`);
+            setNotice(response.data.message);
+            await loadUsers();
+        } catch (err) {
+            setError(err.response?.data?.message || `Could not ${decision} this request.`);
+        } finally {
+            setProcessingUserId("");
+        }
+    };
+
     return (
         <div className="users-page">
             <div className="users-heading">
@@ -260,13 +300,22 @@ function UsersPage() {
                         <h2>{counts.admins}</h2>
                     </div>
                 </div>
+                <div className="users-stat-card users-pending-stat">
+                    <div className="users-stat-icon orange">
+                        <ShieldCheck size={22} />
+                    </div>
+                    <div>
+                        <p>Pending Requests</p>
+                        <h2>{counts.pending}</h2>
+                    </div>
+                </div>
             </div>
 
             <div className="users-panel">
                 <div className="users-panel-heading">
                     <div>
                         <h2>All Users</h2>
-                        <p>Accounts stored in the database</p>
+                        <p>Accounts and role requests stored in the database</p>
                     </div>
                 </div>
 
@@ -301,6 +350,17 @@ function UsersPage() {
                         <option value="Active">Active</option>
                         <option value="Inactive">Inactive</option>
                     </select>
+
+                    <select
+                        value={approvalFilter}
+                        onChange={(e) => setApprovalFilter(e.target.value)}
+                        aria-label="Filter by approval status"
+                    >
+                        <option value="All">All Approval States</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Approved">Approved</option>
+                        <option value="Rejected">Rejected</option>
+                    </select>
                 </div>
 
                 <div className="users-table-wrapper">
@@ -308,7 +368,8 @@ function UsersPage() {
                         <thead>
                             <tr>
                                 <th>User</th>
-                                <th>Role</th>
+                                <th>Account / Requested Role</th>
+                                <th>Approval</th>
                                 <th>Status</th>
                                 <th>Actions</th>
                             </tr>
@@ -317,13 +378,13 @@ function UsersPage() {
                         <tbody>
                             {loading ? (
                                 <tr>
-                                    <td colSpan="4" className="users-empty">
+                                    <td colSpan="5" className="users-empty">
                                         Loading users...
                                     </td>
                                 </tr>
                             ) : filteredUsers.length === 0 ? (
                                 <tr>
-                                    <td colSpan="4" className="users-empty">
+                                    <td colSpan="5" className="users-empty">
                                         No users found.
                                     </td>
                                 </tr>
@@ -343,9 +404,19 @@ function UsersPage() {
                                         </td>
 
                                         <td>
-                                            <span className={`users-role ${user.role}`}>
-                                                {user.role.charAt(0).toUpperCase() +
-                                                    user.role.slice(1)}
+                                            <div className="users-role-details">
+                                                <span className={`users-role ${user.role}`}>
+                                                    {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
+                                                </span>
+                                                {user.requestedRole !== user.role && (
+                                                    <small>Requested {user.requestedRole}</small>
+                                                )}
+                                            </div>
+                                        </td>
+
+                                        <td>
+                                            <span className={`users-approval ${user.approvalStatus.toLowerCase()}`}>
+                                                {user.approvalStatus}
                                             </span>
                                         </td>
 
@@ -362,9 +433,33 @@ function UsersPage() {
                                                     title="Edit user"
                                                     aria-label={`Edit ${user.name}`}
                                                     onClick={() => openEditModal(user)}
+                                                    disabled={user.approvalStatus === "Pending"}
                                                 >
                                                     <Pencil size={16} />
                                                 </button>
+
+                                                {user.approvalStatus === "Pending" && (
+                                                    <>
+                                                        <button
+                                                            className="users-icon-button users-approve-button"
+                                                            title={`Approve ${user.requestedRole} request`}
+                                                            aria-label={`Approve ${user.name}'s ${user.requestedRole} request`}
+                                                            onClick={() => handleApproval(user, "approve")}
+                                                            disabled={processingUserId === user.id}
+                                                        >
+                                                            <Check size={16} />
+                                                        </button>
+                                                        <button
+                                                            className="users-icon-button users-reject-button"
+                                                            title="Reject request"
+                                                            aria-label={`Reject ${user.name}'s registration request`}
+                                                            onClick={() => handleApproval(user, "reject")}
+                                                            disabled={processingUserId === user.id}
+                                                        >
+                                                            <Ban size={16} />
+                                                        </button>
+                                                    </>
+                                                )}
 
                                                 <button
                                                     className="users-icon-button"

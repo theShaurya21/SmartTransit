@@ -7,7 +7,6 @@ import {
   Pencil,
   Trash2,
   X,
-  Users,
   Route,
   Activity,
 } from "lucide-react";
@@ -19,13 +18,33 @@ const emptyBus = {
   registration: "",
   route: "",
   driver: "",
+  driverId: "",
   capacity: "50",
-  passengers: "0",
   status: "Active",
 };
 
+function getCurrentUser() {
+  try {
+    return JSON.parse(localStorage.getItem("user") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function normalizeBuses(responseData) {
+  const data = Array.isArray(responseData) ? responseData : responseData.buses || [];
+  return data.map((bus) => ({
+    ...bus,
+    id: bus._id,
+    registration: bus.registrationNumber || "",
+    capacity: Number(bus.capacity),
+  }));
+}
+
 function Buses() {
+  const isAdmin = getCurrentUser().role === "admin";
   const [buses, setBuses] = useState([]);
+  const [drivers, setDrivers] = useState([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [showForm, setShowForm] = useState(false);
@@ -36,25 +55,10 @@ function Buses() {
   const [saving, setSaving] = useState(false);
 
   async function loadBuses() {
-    setLoading(true);
-    setError("");
-
     try {
       const response = await API.get("/buses");
-
-      const data = Array.isArray(response.data)
-        ? response.data
-        : response.data.buses || [];
-
-      setBuses(
-        data.map((bus) => ({
-          ...bus,
-          id: bus._id,
-          registration: bus.registrationNumber || "",
-          passengers: Number(bus.passengers || 0),
-          capacity: Number(bus.capacity),
-        }))
-      );
+      setError("");
+      setBuses(normalizeBuses(response.data));
     } catch (err) {
       setError(
         err.response?.data?.message ||
@@ -66,17 +70,32 @@ function Buses() {
   }
 
   useEffect(() => {
-    loadBuses();
-  }, []);
+    let cancelled = false;
+    API.get("/buses").then(({ data }) => {
+      if (!cancelled) {
+        setBuses(normalizeBuses(data));
+        setError("");
+      }
+    }).catch((err) => {
+      if (!cancelled) {
+        setError(err.response?.data?.message || "Could not load buses. Check that the backend and MongoDB are running.");
+      }
+    }).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    if (isAdmin) {
+      API.get("/users", { params: { role: "driver", status: "Active" } }).then(({ data }) => {
+        if (!cancelled) setDrivers(data);
+      }).catch((err) => {
+        if (!cancelled) setError(err.response?.data?.message || "Unable to load driver accounts.");
+      });
+    }
+    return () => { cancelled = true; };
+  }, [isAdmin]);
 
   const activeCount = buses.filter(
     (bus) => bus.status === "Active"
   ).length;
-
-  const totalPassengers = buses.reduce(
-    (sum, bus) => sum + Number(bus.passengers || 0),
-    0
-  );
 
   const totalCapacity = buses.reduce(
     (sum, bus) => sum + Number(bus.capacity || 0),
@@ -115,8 +134,8 @@ function Buses() {
       registration: bus.registration || "",
       route: bus.route || "",
       driver: bus.driver || "",
+      driverId: bus.driverId || "",
       capacity: String(bus.capacity ?? 50),
-      passengers: String(bus.passengers ?? 0),
       status: bus.status || "Active",
     });
     setError("");
@@ -125,6 +144,15 @@ function Buses() {
 
   function handleChange(event) {
     const { name, value } = event.target;
+    if (name === "driverId") {
+      const selectedDriver = drivers.find((driver) => driver._id === value);
+      setForm((previous) => ({
+        ...previous,
+        driverId: value,
+        driver: selectedDriver?.name || (previous.driverId ? "" : previous.driver),
+      }));
+      return;
+    }
     setForm((previous) => ({ ...previous, [name]: value }));
   }
 
@@ -133,7 +161,6 @@ function Buses() {
     setError("");
 
     const capacity = Number(form.capacity);
-    const passengers = Number(form.passengers);
 
     if (
       !form.busNumber.trim() ||
@@ -147,12 +174,9 @@ function Buses() {
 
     if (
       !Number.isInteger(capacity) ||
-      !Number.isInteger(passengers) ||
-      capacity < 1 ||
-      passengers < 0 ||
-      passengers > capacity
+      capacity < 1
     ) {
-      setError("Enter a valid capacity and passenger count.");
+      setError("Enter a valid passenger capacity.");
       return;
     }
 
@@ -175,6 +199,7 @@ function Buses() {
       registrationNumber: form.registration.trim(),
       route: form.route.trim(),
       driver: form.driver.trim(),
+      driverId: form.driverId || null,
       capacity,
       status: form.status,
     };
@@ -228,12 +253,12 @@ function Buses() {
         <div>
           <span className="bus-eyebrow">TRANSPORT OPERATIONS</span>
           <h1>Bus Management</h1>
-          <p>Manage your college fleet, drivers and passenger capacity.</p>
+          <p>Manage bus records, driver details, and vehicle capacity.</p>
         </div>
 
-        <button className="bus-primary-btn" onClick={openAddForm}>
+        {isAdmin && <button className="bus-primary-btn" onClick={openAddForm}>
           <Plus size={18} /> Add New Bus
-        </button>
+        </button>}
       </div>
 
       {error && !showForm && (
@@ -249,11 +274,6 @@ function Buses() {
         <div className="bus-stat-card">
           <span className="bus-stat-icon"><Activity /></span>
           <div><p>Active Buses</p><h2>{activeCount}</h2></div>
-        </div>
-
-        <div className="bus-stat-card">
-          <span className="bus-stat-icon"><Users /></span>
-          <div><p>Passengers</p><h2>{totalPassengers}</h2></div>
         </div>
 
         <div className="bus-stat-card">
@@ -300,16 +320,16 @@ function Buses() {
                 <th>BUS DETAILS</th>
                 <th>ROUTE</th>
                 <th>DRIVER</th>
-                <th>PASSENGERS</th>
+                <th>CAPACITY</th>
                 <th>STATUS</th>
-                <th>ACTIONS</th>
+                {isAdmin && <th>ACTIONS</th>}
               </tr>
             </thead>
 
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="6" className="bus-empty">
+                  <td colSpan={isAdmin ? 6 : 5} className="bus-empty">
                     Loading buses...
                   </td>
                 </tr>
@@ -330,27 +350,7 @@ function Buses() {
                   <td>{bus.route}</td>
                   <td>{bus.driver}</td>
 
-                  <td>
-                    <div className="bus-capacity">
-                      <strong>
-                        {bus.passengers}/{bus.capacity}
-                      </strong>
-                      <div className="bus-capacity-track">
-                        <span
-                          style={{
-                            width: `${
-                              bus.capacity > 0
-                                ? Math.min(
-                                    100,
-                                    (bus.passengers / bus.capacity) * 100
-                                  )
-                                : 0
-                            }%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </td>
+                  <td>{bus.capacity}</td>
 
                   <td>
                     <span
@@ -364,7 +364,7 @@ function Buses() {
                     </span>
                   </td>
 
-                  <td>
+                  {isAdmin && <td>
                     <div className="bus-actions">
                       <button
                         className="bus-icon-btn"
@@ -384,13 +384,13 @@ function Buses() {
                         <Trash2 size={16} />
                       </button>
                     </div>
-                  </td>
+                  </td>}
                 </tr>
               ))}
 
               {!loading && filteredBuses.length === 0 && (
                 <tr>
-                  <td colSpan="6" className="bus-empty">
+                  <td colSpan={isAdmin ? 6 : 5} className="bus-empty">
                     No buses match your search.
                   </td>
                 </tr>
@@ -472,6 +472,20 @@ function Buses() {
                 </label>
 
                 <label>
+                  Assigned Driver Account
+                  <select
+                    name="driverId"
+                    value={form.driverId}
+                    onChange={handleChange}
+                  >
+                    <option value="">Not linked to an account</option>
+                    {drivers.map((driver) => (
+                      <option key={driver._id} value={driver._id}>{driver.name} ({driver.email})</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
                   Driver Name *
                   <input
                     name="driver"
@@ -490,19 +504,6 @@ function Buses() {
                     min="1"
                     step="1"
                     value={form.capacity}
-                    onChange={handleChange}
-                    required
-                  />
-                </label>
-
-                <label>
-                  Current Passengers
-                  <input
-                    name="passengers"
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={form.passengers}
                     onChange={handleChange}
                     required
                   />

@@ -20,13 +20,15 @@ const protect = async (req, res, next) => {
             });
         }
 
-        // Verify token
-        const decoded = jwt.verify(
-            token,
-            process.env.JWT_SECRET
-        );
+        let decoded;
+        try {
+            decoded = jwt.verify(token, process.env.JWT_SECRET);
+        } catch {
+            return res.status(401).json({
+                message: "Not authorized. Invalid or expired token."
+            });
+        }
 
-        // Find user from token
         const user = await User.findById(decoded.userId).select("-password");
 
         if (!user) {
@@ -35,15 +37,29 @@ const protect = async (req, res, next) => {
             });
         }
 
-        // Attach user to request
+        if (user.approvalStatus === "Pending") {
+            return res.status(403).json({
+                message: "Your account request is awaiting administrator approval."
+            });
+        }
+
+        if (user.approvalStatus === "Rejected") {
+            return res.status(403).json({
+                message: "Your account request was rejected. Contact an administrator."
+            });
+        }
+
+        if (user.status !== "Active") {
+            return res.status(403).json({
+                message: "This account is inactive."
+            });
+        }
+
         req.user = user;
 
         next();
-
     } catch (error) {
-        return res.status(401).json({
-            message: "Not authorized. Invalid or expired token."
-        });
+        next(error);
     }
 };
 

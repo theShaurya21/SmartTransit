@@ -6,7 +6,15 @@ const connectDB = async () => {
 
         console.log("MongoDB Connected Successfully");
     } catch (error) {
-        console.error("MongoDB Connection Failed:", error.message);
+        const safeMessage = error.message.replace(
+            /mongodb(?:\+srv)?:\/\/\S+/gi,
+            "[redacted MongoDB URI]"
+        );
+        console.error("MongoDB Connection Failed:", {
+            name: error.name,
+            code: error.code,
+            message: safeMessage
+        });
         process.exit(1);
     }
 };

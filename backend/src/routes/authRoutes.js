@@ -11,6 +11,7 @@ const {
 } = require("../middleware/authMiddleware");
 
 const router = express.Router();
+const User = require("../models/User");
 
 // Public routes
 router.post("/register", registerUser);
@@ -22,6 +23,25 @@ router.get("/me", protect, (req, res) => {
         message: "User authenticated successfully",
         user: req.user
     });
+});
+
+router.patch("/me", protect, async (req, res, next) => {
+    try {
+        const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+        if (!name || name.length > 100) {
+            return res.status(400).json({ message: "Name must be between 1 and 100 characters." });
+        }
+
+        const user = await User.findByIdAndUpdate(
+            req.user._id,
+            { $set: { name } },
+            { new: true, runValidators: true }
+        ).select("-password");
+
+        return res.json({ user });
+    } catch (error) {
+        return next(error);
+    }
 });
 
 // Admin-only test route

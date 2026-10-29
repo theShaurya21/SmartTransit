@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 
 import { useEffect, useState } from "react";
+import API from "../services/api";
 
 const navigation = [
     { name: "Overview", path: "/dashboard", icon: LayoutDashboard, end: true },
@@ -39,11 +40,21 @@ function DashboardLayout() {
     const navigate = useNavigate();
     const [menuOpen, setMenuOpen] = useState(false);
     const [user, setUser] = useState(getStoredUser);
+    const [profileError, setProfileError] = useState("");
 
     useEffect(() => {
         const syncUser = () => {
             setUser(getStoredUser());
         };
+
+        API.get("/auth/me").then(({ data }) => {
+            localStorage.setItem("user", JSON.stringify(data.user));
+            setUser(data.user);
+        }).catch((error) => {
+            if (error.response?.status !== 401 && error.response?.status !== 403) {
+                setProfileError("Could not refresh the account profile from the backend.");
+            }
+        });
 
         // Listen for profile changes within the application.
         window.addEventListener("userUpdated", syncUser);
@@ -84,7 +95,9 @@ function DashboardLayout() {
                 <div className="nav-label">MAIN MENU</div>
 
                 <nav className="sidebar-nav">
-                    {navigation.map((item) => {
+                    {navigation
+                        .filter((item) => !["/users", "/analytics"].includes(item.path) || user.role === "admin")
+                        .map((item) => {
                         const Icon = item.icon;
 
                         return (
@@ -164,6 +177,7 @@ function DashboardLayout() {
                 </header>
 
                 <section className="page-content">
+                    {profileError && <p className="incident-message incident-error" role="alert">{profileError}</p>}
                     <Outlet />
                 </section>
             </main>

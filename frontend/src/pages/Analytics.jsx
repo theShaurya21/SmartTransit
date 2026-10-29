@@ -1,263 +1,182 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  Activity,
-  Bus,
-  CheckCircle,
-  Clock,
-  Download,
-  TrendingUp,
-  AlertTriangle,
-  Users,
+  Activity, AlertTriangle, Bus, CheckCircle, Clock, Download, Route,
 } from "lucide-react";
+import API from "../services/api";
 
-const weeklyData = [
-  { day: "Mon", students: 720, incidents: 4 },
-  { day: "Tue", students: 860, incidents: 3 },
-  { day: "Wed", students: 790, incidents: 5 },
-  { day: "Thu", students: 940, incidents: 2 },
-  { day: "Fri", students: 880, incidents: 4 },
-  { day: "Sat", students: 420, incidents: 1 },
-  { day: "Sun", students: 180, incidents: 0 },
-];
+const periods = { "7 Days": 7, "30 Days": 30, "90 Days": 90 };
 
-const routeData = [
-  { name: "Route A", buses: 6, students: 320, efficiency: 92 },
-  { name: "Route B", buses: 5, students: 280, efficiency: 86 },
-  { name: "Route C", buses: 4, students: 245, efficiency: 95 },
-  { name: "Route D", buses: 5, students: 310, efficiency: 78 },
-  { name: "Route E", buses: 4, students: 185, efficiency: 89 },
-];
+function csvCell(value) {
+  return `"${String(value ?? "").replaceAll('"', '""')}"`;
+}
 
 export default function AnalyticsPage() {
   const [period, setPeriod] = useState("7 Days");
+  const [records, setRecords] = useState({ buses: [], routes: [], incidents: [], generatedAt: null });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const totals = useMemo(() => {
-    const students = weeklyData.reduce((sum, item) => sum + item.students, 0);
-    const incidents = weeklyData.reduce((sum, item) => sum + item.incidents, 0);
+  useEffect(() => {
+    let cancelled = false;
+    API.get("/analytics", { params: { days: periods[period] } })
+      .then(({ data }) => {
+        if (!cancelled) {
+          setRecords({
+            buses: data.buses,
+            routes: data.routes,
+            incidents: data.incidents,
+            generatedAt: data.generatedAt,
+          });
+        }
+      })
+      .catch((requestError) => {
+        if (!cancelled) {
+          setError(requestError.response?.data?.message || "Unable to load analytics records.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
-    return { students, incidents };
-  }, []);
+    return () => { cancelled = true; };
+  }, [period]);
+  const displayedIncidents = records.incidents;
 
-  const displayedData =
-    period === "7 Days"
-      ? weeklyData
-      : period === "30 Days"
-        ? weeklyData.map((item) => ({
-            ...item,
-            students: item.students * 4,
-            incidents: item.incidents * 4,
-          }))
-        : weeklyData.map((item) => ({
-            ...item,
-            students: item.students * 12,
-            incidents: item.incidents * 12,
-          }));
+  const dailyCounts = useMemo(() => {
+    const days = periods[period];
+    const now = new Date(records.generatedAt || 0).getTime();
+    const buckets = Array.from({ length: 7 }, (_, index) => ({
+      label: `${Math.floor((index * days) / 7) + 1}-${Math.floor(((index + 1) * days) / 7)}d`,
+      incidents: 0,
+    }));
 
-  const maxStudents = Math.max(...displayedData.map((item) => item.students));
+    displayedIncidents.forEach((incident) => {
+      const age = Math.max(0, now - new Date(incident.createdAt).getTime());
+      const bucket = Math.min(6, Math.floor((days - age / (24 * 60 * 60 * 1000)) * 7 / days));
+      buckets[bucket].incidents += 1;
+    });
+
+    return buckets;
+  }, [displayedIncidents, period, records.generatedAt]);
+
+  const maxIncidents = Math.max(1, ...dailyCounts.map((day) => day.incidents));
 
   function downloadReport() {
-    const rows = [
-      ["Day", "Student Trips", "Incidents"],
-      ...displayedData.map((item) => [
-        item.day,
-        item.students,
-        item.incidents,
-      ]),
-    ];
-
-    const csv = rows.map((row) => row.join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-
-    link.href = url;
-    link.download = "smarttransit-analytics.csv";
-    link.click();
-
-    URL.revokeObjectURL(url);
+    try {
+      const rows = [
+        ["ID", "Created", "Bus", "Route", "Category", "Severity", "Status", "Description"],
+        ...displayedIncidents.map((incident) => [
+          incident._id,
+          incident.createdAt,
+          incident.bus,
+          incident.route,
+          incident.category,
+          incident.severity,
+          incident.status,
+          incident.description,
+        ]),
+      ];
+      const csv = rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
+      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `smarttransit-incidents-${period.toLowerCase().replace(" ", "-")}.csv`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (exportError) {
+      setError(`Unable to export the displayed incident data: ${exportError.message}`);
+    }
   }
 
   return (
     <div className="analytics-page">
       <div className="analytics-heading">
         <div>
-          <p className="analytics-eyebrow">PERFORMANCE OVERVIEW</p>
+          <p className="analytics-eyebrow">DATABASE SUMMARY</p>
           <h1>Transport Analytics</h1>
-          <p className="analytics-subtitle">
-            Monitor transportation usage, safety, and route performance.
-          </p>
+          <p className="analytics-subtitle">Counts and incident reports from stored records; trip-performance metrics are not available.</p>
         </div>
-
         <div className="analytics-actions">
-          <select value={period} onChange={(e) => setPeriod(e.target.value)}>
-            <option>7 Days</option>
-            <option>30 Days</option>
-            <option>90 Days</option>
+          <select value={period} onChange={(event) => {
+            setLoading(true);
+            setError("");
+            setPeriod(event.target.value);
+          }} aria-label="Incident reporting period">
+            {Object.keys(periods).map((value) => <option key={value}>{value}</option>)}
           </select>
-
-          <button className="analytics-export" onClick={downloadReport}>
-            <Download size={17} />
-            Export CSV
+          <button className="analytics-export" onClick={downloadReport} disabled={loading || Boolean(error)}>
+            <Download size={17} /> Export CSV
           </button>
         </div>
       </div>
 
+      {error && <div className="incident-message incident-error" role="alert">{error}</div>}
+
       <div className="analytics-stats">
-        <div className="analytics-stat-card">
-          <div className="analytics-stat-icon blue">
-            <Bus size={21} />
-          </div>
-          <p>Total Buses</p>
-          <h2>24</h2>
-          <span>Across all routes</span>
-        </div>
-
-        <div className="analytics-stat-card">
-          <div className="analytics-stat-icon purple">
-            <Users size={21} />
-          </div>
-          <p>Student Trips</p>
-          <h2>{totals.students.toLocaleString("en-IN")}</h2>
-          <span>Sample weekly data</span>
-        </div>
-
-        <div className="analytics-stat-card">
-          <div className="analytics-stat-icon green">
-            <CheckCircle size={21} />
-          </div>
-          <p>Avg. Route Efficiency</p>
-          <h2>88%</h2>
-          <span>Sample performance score</span>
-        </div>
-
-        <div className="analytics-stat-card">
-          <div className="analytics-stat-icon orange">
-            <AlertTriangle size={21} />
-          </div>
-          <p>Reported Incidents</p>
-          <h2>{totals.incidents}</h2>
-          <span>Sample weekly data</span>
-        </div>
+        {[
+          { title: "Total Buses", value: records.buses.length, icon: Bus, note: "Stored bus records" },
+          { title: "Active Routes", value: records.routes.filter((route) => route.status === "Active").length, icon: Route, note: "Stored route records" },
+          { title: "Incidents in Period", value: displayedIncidents.length, icon: AlertTriangle, note: `Last ${period.toLowerCase()}` },
+          { title: "Unresolved Incidents", value: displayedIncidents.filter((incident) => incident.status !== "Resolved").length, icon: CheckCircle, note: "Within selected period" },
+        ].map((stat) => {
+          const Icon = stat.icon;
+          return (
+            <div className="analytics-stat-card" key={stat.title}>
+              <div className="analytics-stat-icon blue"><Icon size={21} /></div>
+              <p>{stat.title}</p>
+              <h2>{loading ? "…" : stat.value}</h2>
+              <span>{stat.note}</span>
+            </div>
+          );
+        })}
       </div>
 
       <div className="analytics-chart-grid">
         <section className="analytics-panel">
           <div className="analytics-panel-heading">
-            <div>
-              <h2>Student Transport Usage</h2>
-              <p>Student trips by day</p>
-            </div>
+            <div><h2>Reported Incidents</h2><p>Stored incidents grouped across the selected period</p></div>
             <Activity size={21} />
           </div>
-
-          <div className="analytics-bar-chart">
-            {displayedData.map((item) => (
-              <div className="analytics-bar-column" key={item.day}>
-                <span className="analytics-bar-value">
-                  {item.students.toLocaleString("en-IN")}
-                </span>
-                <div className="analytics-bar-track">
-                  <div
-                    className="analytics-bar"
-                    style={{
-                      height: `${(item.students / maxStudents) * 100}%`,
-                    }}
-                  />
+          <div className="analytics-incident-list">
+            {dailyCounts.map((day) => (
+              <div className="analytics-incident-row" key={day.label}>
+                <span>{day.label}</span>
+                <div className="analytics-incident-track">
+                  <div className="analytics-incident-bar" style={{ width: `${(day.incidents / maxIncidents) * 100}%` }} />
                 </div>
-                <span className="analytics-bar-label">{item.day}</span>
+                <strong>{day.incidents}</strong>
               </div>
             ))}
           </div>
-
-          <div className="analytics-chart-footer">
-            <TrendingUp size={17} />
-            <span>Usage overview for the selected period</span>
-          </div>
+          {!loading && displayedIncidents.length === 0 && <p className="tracking-empty">No incidents were reported in this period.</p>}
+          <div className="analytics-chart-footer warning"><Clock size={17} /><span>Trip counts, ridership, and efficiency are unavailable without trip records.</span></div>
         </section>
 
-        <section className="analytics-panel">
+        <section className="analytics-panel analytics-route-panel">
           <div className="analytics-panel-heading">
-            <div>
-              <h2>Incident Overview</h2>
-              <p>Reported incidents by day</p>
-            </div>
-            <AlertTriangle size={21} />
+            <div><h2>Routes</h2><p>Actual configured route information</p></div>
+            <Bus size={21} />
           </div>
-
-          <div className="analytics-incident-list">
-            {displayedData.map((item) => (
-              <div className="analytics-incident-row" key={item.day}>
-                <span>{item.day}</span>
-                <div className="analytics-incident-track">
-                  <div
-                    className="analytics-incident-bar"
-                    style={{
-                      width: `${
-                        (item.incidents /
-                          Math.max(
-                            1,
-                            ...displayedData.map((day) => day.incidents),
-                          )) *
-                        100
-                      }%`,
-                    }}
-                  />
-                </div>
-                <strong>{item.incidents}</strong>
-              </div>
-            ))}
-          </div>
-
-          <div className="analytics-chart-footer warning">
-            <Clock size={17} />
-            <span>Review reported incidents regularly</span>
+          <div className="analytics-table-wrapper">
+            <table className="analytics-table">
+              <thead><tr><th>Route</th><th>Status</th><th>Distance</th><th>Duration</th></tr></thead>
+              <tbody>
+                {records.routes.map((route) => (
+                  <tr key={route._id}>
+                    <td><strong>{route.name}</strong></td>
+                    <td>{route.status}</td>
+                    <td>{route.distance} km</td>
+                    <td>{route.duration} min</td>
+                  </tr>
+                ))}
+                {!loading && records.routes.length === 0 && <tr><td colSpan="4">No route records are available.</td></tr>}
+              </tbody>
+            </table>
           </div>
         </section>
       </div>
 
-      <section className="analytics-panel analytics-route-panel">
-        <div className="analytics-panel-heading">
-          <div>
-            <h2>Route Performance</h2>
-            <p>Sample route-wise transportation statistics</p>
-          </div>
-          <Bus size={21} />
-        </div>
-
-        <div className="analytics-table-wrapper">
-          <table className="analytics-table">
-            <thead>
-              <tr>
-                <th>Route</th>
-                <th>Buses</th>
-                <th>Student Trips</th>
-                <th>Efficiency</th>
-                <th>Performance</th>
-              </tr>
-            </thead>
-            <tbody>
-              {routeData.map((route) => (
-                <tr key={route.name}>
-                  <td>
-                    <strong>{route.name}</strong>
-                  </td>
-                  <td>{route.buses}</td>
-                  <td>{route.students}</td>
-                  <td>{route.efficiency}%</td>
-                  <td>
-                    <div className="analytics-efficiency-track">
-                      <div
-                        className="analytics-efficiency-bar"
-                        style={{ width: `${route.efficiency}%` }}
-                      />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      {error && <p className="analytics-chart-footer"><AlertTriangle size={17} /> Analytics may be incomplete because one or more requests failed.</p>}
     </div>
   );
 }

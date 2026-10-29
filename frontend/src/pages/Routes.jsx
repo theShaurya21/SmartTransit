@@ -26,7 +26,21 @@ const emptyRoute = {
   status: "Active",
 };
 
+function getCurrentUser() {
+  try {
+    return JSON.parse(localStorage.getItem("user") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function normalizeRoutes(responseData) {
+  const data = Array.isArray(responseData) ? responseData : responseData.routes || [];
+  return data.map((route) => ({ ...route, id: route._id }));
+}
+
 function Routes() {
+  const isAdmin = getCurrentUser().role === "admin";
   const [routes, setRoutes] = useState([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
@@ -40,19 +54,9 @@ function Routes() {
   // Load routes from MongoDB through the backend API.
   async function loadRoutes() {
     try {
-      setError("");
       const response = await API.get("/routes");
-
-      const data = Array.isArray(response.data)
-        ? response.data
-        : response.data.routes || [];
-
-      setRoutes(
-        data.map((route) => ({
-          ...route,
-          id: route._id,
-        }))
-      );
+      setError("");
+      setRoutes(normalizeRoutes(response.data));
     } catch (err) {
       console.error("Failed to load routes:", err);
       setError("Could not load routes. Check that the backend is running.");
@@ -62,7 +66,20 @@ function Routes() {
   }
 
   useEffect(() => {
-    loadRoutes();
+    let cancelled = false;
+    API.get("/routes").then(({ data }) => {
+      if (!cancelled) {
+        setRoutes(normalizeRoutes(data));
+        setError("");
+      }
+    }).catch((err) => {
+      if (!cancelled) {
+        setError(err.response?.data?.message || "Could not load routes. Check that the backend is running.");
+      }
+    }).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => { cancelled = true; };
   }, []);
 
   const activeCount = routes.filter(
@@ -227,9 +244,9 @@ function Routes() {
           <p>Create and manage college transport routes and stops.</p>
         </div>
 
-        <button className="route-primary-btn" onClick={openAddForm}>
+        {isAdmin && <button className="route-primary-btn" onClick={openAddForm}>
           <Plus size={18} /> Add New Route
-        </button>
+        </button>}
       </div>
 
       <div className="route-stats-grid">
@@ -304,7 +321,7 @@ function Routes() {
                   <th>DURATION</th>
                   <th>ASSIGNED BUS</th>
                   <th>STATUS</th>
-                  <th>ACTIONS</th>
+                  {isAdmin && <th>ACTIONS</th>}
                 </tr>
               </thead>
 
@@ -348,7 +365,7 @@ function Routes() {
                       </span>
                     </td>
 
-                    <td>
+                    {isAdmin && <td>
                       <div className="route-actions">
                         <button
                           className="route-icon-btn"
@@ -368,13 +385,13 @@ function Routes() {
                           <Trash2 size={16} />
                         </button>
                       </div>
-                    </td>
+                    </td>}
                   </tr>
                 ))}
 
                 {filteredRoutes.length === 0 && (
                   <tr>
-                    <td colSpan="7" className="route-empty">
+                    <td colSpan={isAdmin ? 7 : 6} className="route-empty">
                       {routes.length === 0
                         ? "No routes found. Add your first route."
                         : "No routes match your search."}

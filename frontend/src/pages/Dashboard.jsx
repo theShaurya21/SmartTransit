@@ -1,66 +1,69 @@
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
-    Bus,
-    Users,
-    Route,
-    AlertTriangle,
-    ArrowUpRight,
-    ArrowDownRight,
-    Clock,
-    MapPin
+    Bus, Users, Route, AlertTriangle, ArrowUpRight, Clock, MapPin
 } from "lucide-react";
-
-const stats = [
-    {
-        title: "Total Buses",
-        value: "24",
-        change: "+2 this month",
-        icon: Bus,
-        color: "blue"
-    },
-    {
-        title: "Active Buses",
-        value: "18",
-        change: "75% fleet active",
-        icon: MapPin,
-        color: "green"
-    },
-    {
-        title: "Total Students",
-        value: "1,240",
-        change: "+8.2% this month",
-        icon: Users,
-        color: "purple"
-    },
-    {
-        title: "Active Routes",
-        value: "12",
-        change: "2 delayed",
-        icon: Route,
-        color: "orange"
-    }
-];
-
-const buses = [
-    { id: "BUS-001", route: "Mathura - Campus", driver: "Amit Kumar", status: "On Time", time: "08:15 AM" },
-    { id: "BUS-002", route: "Vrindavan - Campus", driver: "Rahul Sharma", status: "Delayed", time: "08:25 AM" },
-    { id: "BUS-003", route: "Agra - Campus", driver: "Vikas Singh", status: "On Time", time: "08:30 AM" },
-    { id: "BUS-004", route: "Hathras - Campus", driver: "Rohit Verma", status: "On Route", time: "08:40 AM" }
-];
+import API from "../services/api";
 
 function Dashboard() {
+    const [data, setData] = useState({ stats: null, buses: [], incidents: [] });
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState("");
+
+    useEffect(() => {
+        let cancelled = false;
+        Promise.all([
+            API.get("/dashboard/stats"),
+            API.get("/buses"),
+            API.get("/incidents")
+        ]).then(([statsResponse, busesResponse, incidentsResponse]) => {
+            if (!cancelled) {
+                setData({
+                    stats: statsResponse.data,
+                    buses: busesResponse.data,
+                    incidents: incidentsResponse.data
+                });
+            }
+        }).catch((requestError) => {
+            if (!cancelled) {
+                setError(requestError.response?.data?.message || "Unable to load current transport data.");
+            }
+        }).finally(() => {
+            if (!cancelled) setLoading(false);
+        });
+
+        return () => { cancelled = true; };
+    }, []);
+
+    const stats = [
+        { title: "Total Buses", value: data.stats?.totalBuses, icon: Bus, color: "blue" },
+        { title: "Active Buses", value: data.stats?.activeBuses, icon: MapPin, color: "green" },
+        { title: "Students", value: data.stats?.totalStudents, icon: Users, color: "purple" },
+        { title: "Active Routes", value: data.stats?.activeRoutes, icon: Route, color: "orange" },
+        { title: "Active Trips", value: data.stats?.activeTrips, icon: Clock, color: "blue" },
+        { title: "Unresolved Incidents", value: data.stats?.unresolvedIncidents, icon: AlertTriangle, color: "orange" }
+    ];
+
+    const buses = data.buses.slice(0, 5);
+    const incidents = data.incidents.slice(0, 3);
+
     return (
         <div className="dashboard-page">
             <div className="page-heading">
                 <div>
                     <h1>Dashboard Overview</h1>
-                    <p>Monitor your college transportation system.</p>
+                    <p>Operational overview from the connected transport records.</p>
                 </div>
 
                 <div className="date-badge">
                     <Clock size={16} />
-                    Transport Overview
+                    {data.stats?.updatedAt
+                        ? `Updated ${new Date(data.stats.updatedAt).toLocaleTimeString()}`
+                        : "Transport Overview"}
                 </div>
             </div>
+
+            {error && <div className="incident-message incident-error" role="alert">{error}</div>}
 
             <div className="stats-grid">
                 {stats.map((stat) => {
@@ -76,8 +79,12 @@ function Dashboard() {
                             </div>
 
                             <p>{stat.title}</p>
-                            <h2>{stat.value}</h2>
-                            <span className="stat-change">{stat.change}</span>
+                            <h2>{loading ? "…" : stat.value ?? "Unavailable"}</h2>
+                            <span className="stat-change">
+                                {stat.title === "Active Buses" ? "Fleet status records" :
+                                    stat.title === "Students" && stat.value == null ? "Administrator metric" :
+                                        "Stored database records"}
+                            </span>
                         </div>
                     );
                 })}
@@ -88,26 +95,24 @@ function Dashboard() {
                     <div className="panel-heading">
                         <div>
                             <h2>Fleet Status</h2>
-                            <p>Current transport activity</p>
+                            <p>Bus records and available operational status</p>
                         </div>
-                        <span className="live-indicator">
-                            <span></span> Demo data
-                        </span>
+                        <span className="live-indicator">{loading ? "Loading" : "Database records"}</span>
                     </div>
 
                     <div className="fleet-summary">
                         <div className="fleet-circle">
                             <div>
-                                <strong>18</strong>
-                                <span>Active</span>
+                                <strong>{data.stats?.activeBuses ?? "—"}</strong>
+                                <span>Active buses</span>
                             </div>
                         </div>
 
                         <div className="fleet-legend">
-                            <div><span className="legend-dot green-dot"></span> On time <strong>14</strong></div>
-                            <div><span className="legend-dot orange-dot"></span> Delayed <strong>2</strong></div>
-                            <div><span className="legend-dot gray-dot"></span> Inactive <strong>6</strong></div>
-                            <div><span className="legend-dot blue-dot"></span> Total fleet <strong>24</strong></div>
+                            <div><span className="legend-dot green-dot"></span> Active <strong>{data.stats?.activeBuses ?? "—"}</strong></div>
+                            <div><span className="legend-dot gray-dot"></span> Other status <strong>{data.stats ? data.stats.totalBuses - data.stats.activeBuses : "—"}</strong></div>
+                            <div><span className="legend-dot blue-dot"></span> Total fleet <strong>{data.stats?.totalBuses ?? "—"}</strong></div>
+                            <div><span className="legend-dot orange-dot"></span> Active trips <strong>{data.stats?.activeTrips ?? "—"}</strong></div>
                         </div>
                     </div>
                 </div>
@@ -116,43 +121,22 @@ function Dashboard() {
                     <div className="panel-heading">
                         <div>
                             <h2>Recent Alerts</h2>
-                            <p>Transport notifications</p>
+                            <p>Recent incident reports</p>
                         </div>
                         <AlertTriangle size={20} className="alert-heading-icon" />
                     </div>
 
-                    <div className="alert-item">
-                        <div className="alert-icon orange">
-                            <AlertTriangle size={17} />
+                    {incidents.map((incident) => (
+                        <div className="alert-item" key={incident._id}>
+                            <div className="alert-icon orange"><AlertTriangle size={17} /></div>
+                            <div>
+                                <strong>{incident.category} · {incident.status}</strong>
+                                <p>{incident.bus} · {incident.route}</p>
+                                <span>{new Date(incident.createdAt).toLocaleString()}</span>
+                            </div>
                         </div>
-                        <div>
-                            <strong>Route delay detected</strong>
-                            <p>BUS-002 · Vrindavan route</p>
-                            <span>Demo alert</span>
-                        </div>
-                    </div>
-
-                    <div className="alert-item">
-                        <div className="alert-icon blue">
-                            <MapPin size={17} />
-                        </div>
-                        <div>
-                            <strong>Trip started</strong>
-                            <p>BUS-003 · Agra route</p>
-                            <span>Demo notification</span>
-                        </div>
-                    </div>
-
-                    <div className="alert-item">
-                        <div className="alert-icon red">
-                            <AlertTriangle size={17} />
-                        </div>
-                        <div>
-                            <strong>Incident reports</strong>
-                            <p>Review pending reports</p>
-                            <span>Demo notification</span>
-                        </div>
-                    </div>
+                    ))}
+                    {!loading && incidents.length === 0 && <p className="tracking-empty">No incident reports are available.</p>}
                 </div>
             </div>
 
@@ -162,12 +146,7 @@ function Dashboard() {
                         <h2>Bus Overview</h2>
                         <p>Summary of selected buses</p>
                     </div>
-                    <button
-                        className="secondary-button"
-                        onClick={() => window.location.href = "/buses"}
-                    >
-                        View All
-                    </button>
+                    <Link className="secondary-button" to="/buses">View All</Link>
                 </div>
 
                 <div className="table-scroll">
@@ -178,24 +157,23 @@ function Dashboard() {
                                 <th>Route</th>
                                 <th>Driver</th>
                                 <th>Status</th>
-                                <th>Departure</th>
+                                <th>Capacity</th>
                             </tr>
                         </thead>
 
                         <tbody>
                             {buses.map((bus) => (
-                                <tr key={bus.id}>
-                                    <td><strong>{bus.id}</strong></td>
+                                <tr key={bus._id}>
+                                    <td><strong>{bus.busNumber}</strong></td>
                                     <td>{bus.route}</td>
                                     <td>{bus.driver}</td>
-                                    <td>
-                                        <span className={`status-pill ${bus.status.toLowerCase().replace(" ", "-")}`}>
-                                            {bus.status}
-                                        </span>
-                                    </td>
-                                    <td>{bus.time}</td>
+                                    <td><span className={`status-pill ${bus.status.toLowerCase()}`}>{bus.status}</span></td>
+                                    <td>{bus.capacity}</td>
                                 </tr>
                             ))}
+                            {!loading && buses.length === 0 && (
+                                <tr><td colSpan="5">No buses are stored yet.</td></tr>
+                            )}
                         </tbody>
                     </table>
                 </div>

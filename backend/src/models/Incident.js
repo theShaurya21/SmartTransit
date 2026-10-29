@@ -39,6 +39,11 @@ const incidentSchema = new mongoose.Schema(
       default: "Transport Admin",
       trim: true,
     },
+    reporterId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      index: true,
+    },
     status: {
       type: String,
       enum: ["Reported", "Investigating", "Resolved"],

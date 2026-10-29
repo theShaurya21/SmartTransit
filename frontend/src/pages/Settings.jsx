@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Settings as SettingsIcon,
   UserRound,
@@ -9,6 +9,7 @@ import {
   Save,
   RotateCcw,
 } from "lucide-react";
+import API from "../services/api";
 
 const defaultSettings = {
   adminName: "Transport Administrator",
@@ -21,16 +22,20 @@ const defaultSettings = {
   routeDeviationAlerts: true,
   trackingInterval: "10",
   etaBuffer: "5",
-  systemStatus: "Operational",
 };
 
 export default function SettingsPage() {
+  const [apiHealth, setApiHealth] = useState("Checking");
   const [settings, setSettings] = useState(() => {
     try {
       const saved = localStorage.getItem("smarttransit-settings");
-      return saved
-        ? { ...defaultSettings, ...JSON.parse(saved) }
-        : defaultSettings;
+      const user = JSON.parse(localStorage.getItem("user") || "{}");
+      return {
+        ...defaultSettings,
+        ...(saved ? JSON.parse(saved) : {}),
+        adminName: user.name || defaultSettings.adminName,
+        email: user.email || defaultSettings.email,
+      };
     } catch {
       return defaultSettings;
     }
@@ -38,6 +43,17 @@ export default function SettingsPage() {
 
   const [activeTab, setActiveTab] = useState("profile");
   const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    API.get("/health").then(({ data }) => {
+      if (!cancelled) setApiHealth(data.database);
+    }).catch(() => {
+      if (!cancelled) setApiHealth("Unavailable");
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   function updateSetting(key, value) {
     setSettings((previous) => ({
@@ -47,40 +63,49 @@ export default function SettingsPage() {
     setMessage("");
   }
 
-  function saveSettings(event) {
+  async function saveSettings(event) {
     event.preventDefault();
+    setSaving(true);
 
     try {
-      // Save all settings on this browser.
-      localStorage.setItem(
-        "smarttransit-settings",
-        JSON.stringify(settings)
-      );
+      const { data } = await API.patch("/auth/me", { name: settings.adminName.trim() });
+      localStorage.setItem("user", JSON.stringify(data.user));
+      setSettings((current) => ({
+        ...current,
+        adminName: data.user.name,
+        email: data.user.email,
+      }));
+      window.dispatchEvent(new Event("userUpdated"));
 
-      // Update the user profile stored during login.
-      const storedUser = JSON.parse(
-        localStorage.getItem("user") || "{}"
-      );
-
-      localStorage.setItem(
-        "user",
-        JSON.stringify({
-          ...storedUser,
-          name: settings.adminName.trim(),
-        })
-      );
-
-      // Notify components that listen for profile changes.
-      window.dispatchEvent(new Event("profileUpdated"));
-
-      setMessage("Settings saved successfully on this device.");
-    } catch {
-      setMessage("Unable to save settings in this browser.");
+      try {
+        localStorage.setItem(
+          "smarttransit-settings",
+          JSON.stringify({ ...settings, adminName: data.user.name, email: data.user.email })
+        );
+        setMessage("Profile saved to your account. Other preferences are saved on this device only.");
+      } catch {
+        setMessage("Profile saved to your account, but device preferences could not be saved.");
+      }
+    } catch (error) {
+      setMessage(error.response?.data?.message || "Unable to save your profile.");
+    } finally {
+      setSaving(false);
     }
   }
 
   function resetSettings() {
-    setSettings(defaultSettings);
+    const user = (() => {
+      try {
+        return JSON.parse(localStorage.getItem("user") || "{}");
+      } catch {
+        return {};
+      }
+    })();
+    setSettings({
+      ...defaultSettings,
+      adminName: user.name || defaultSettings.adminName,
+      email: user.email || defaultSettings.email,
+    });
     localStorage.removeItem("smarttransit-settings");
     setMessage("Settings restored to their defaults. Click Save Settings to save.");
   }
@@ -99,7 +124,7 @@ export default function SettingsPage() {
           <p className="settings-eyebrow">SYSTEM CONFIGURATION</p>
           <h1>Settings</h1>
           <p>
-            Manage your administrator profile and transport preferences.
+            Manage your profile and device-specific transport preferences.
           </p>
         </div>
 
@@ -138,16 +163,16 @@ export default function SettingsPage() {
               <div className="settings-section-heading">
                 <UserRound size={20} />
                 <div>
-                  <h2>Administrator Profile</h2>
+                  <h2>Your Profile</h2>
                   <p>
-                    Update the details displayed in your admin panel.
+                    Your name is stored with your account and shown in the dashboard.
                   </p>
                 </div>
               </div>
 
               <div className="settings-form-grid">
                 <label>
-                  Administrator Name
+                  Display Name
                   <input
                     value={settings.adminName}
                     onChange={(e) =>
@@ -162,10 +187,8 @@ export default function SettingsPage() {
                   <input
                     type="email"
                     value={settings.email}
-                    onChange={(e) =>
-                      updateSetting("email", e.target.value)
-                    }
-                    required
+                    readOnly
+                    aria-label="Account email (read only)"
                   />
                 </label>
 
@@ -328,27 +351,24 @@ export default function SettingsPage() {
                 </div>
                 <div>
                   <span>Database</span>
-                  <strong>MongoDB configured</strong>
+                  <strong>{apiHealth}</strong>
                 </div>
                 <div>
                   <span>Backend API</span>
-                  <strong>http://localhost:5000</strong>
+                  <strong>{import.meta.env.VITE_API_URL || "http://localhost:5000/api"}</strong>
                 </div>
                 <div>
                   <span>Tracking Mode</span>
-                  <strong>Prototype / simulated bus movement</strong>
+                  <strong>Driver device GPS with 15-second polling</strong>
                 </div>
                 <div>
                   <span>Displayed Status</span>
-                  <strong className="settings-operational">
-                    {settings.systemStatus}
-                  </strong>
+                  <strong className="settings-operational">{apiHealth}</strong>
                 </div>
               </div>
 
               <p className="settings-system-note">
-                Database connectivity is confirmed by the backend terminal.
-                Individual frontend settings are stored locally in this browser.
+                Account profile updates are stored by the backend. Notification and ETA preferences remain on this device and do not change server behavior. ETA and trip history are not implemented.
               </p>
             </section>
           )}
@@ -372,9 +392,9 @@ export default function SettingsPage() {
                 Reset
               </button>
 
-              <button type="submit" className="settings-save-button">
+              <button type="submit" className="settings-save-button" disabled={saving}>
                 <Save size={16} />
-                Save Settings
+                {saving ? "Saving..." : "Save Settings"}
               </button>
             </div>
           </div>
